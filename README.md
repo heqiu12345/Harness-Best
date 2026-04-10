@@ -16,7 +16,7 @@ AI 编码助手裸跑时倾向于：跳过需求分析直接写代码、不写�
 
 ```bash
 # 1. 克隆
-git clone https://github.com/YOUR_USERNAME/Harness-Best.git
+git clone https://github.com/heqiu12345/Harness-Best.git
 cd Harness-Best
 
 # 2. 运行安装脚本
