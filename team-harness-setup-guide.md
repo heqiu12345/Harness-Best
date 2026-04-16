@@ -1,6 +1,6 @@
 # 三层 Harness 套件：团队安装与使用指南
 
-> 版本：1.0 | 更新日期：2026-04-10
+> 版本：2.0 | 更新日期：2026-04-16
 >
 > 融合 Superpowers（执行纪律）+ OpenSpec（规范驱动）+ Compound Engineering 精选能力（多维评审 + 知识沉淀），
 > 构建 Claude Code 最佳实践 harness。
@@ -37,6 +37,13 @@ Anthropic 的研究表明：同一个模型在不同 harness 下的表现差距�
 | AI 写的代码质量不可控 | Layer 2 执行层 | Superpowers TDD + 子 agent 隔离 + 微审查 |
 | 经验不积累，每次从零开始 | Layer 3 质量知识层 | multi-review 宏审查 + compound-knowledge 知识沉淀 |
 
+### 核心设计原则
+
+- **禁止规则优先**：LLM 对"禁止做 X"的遵守率远高于"应该做 Y"。CLAUDE.md 中使用 7 条绝对禁止规则约束工作流
+- **知识按需加载**：knowledge/index.md 轻量索引（< 500 tokens），具体文件按任务相关性按需读取，防止上下文膨胀
+- **Hook 自动提醒**：Stop Hook 在 Claude 停止时检查未归档变更和缺失索引，不依赖 Claude "记住"规则
+- **人类是最终关卡**：不引入 verify.sh 强制验证，harness 管纪律，人管决策
+
 ---
 
 ## 二、架构概览
@@ -52,6 +59,12 @@ Anthropic 的研究表明：同一个模型在不同 harness 下的表现差距�
 │  OpenSpec propose（生成结构化规范）              │
 │       ↓                                       │
 │  用户审阅规范 ✅                                │
+└──────────────────┬──────────────────────────┘
+                   ▼
+┌─────────────────────────────────────────────┐
+│  Layer 1.5（可选）：技术方案评审                  │
+│  /tech-proposal（生成面向团队评审的技术设计文档）    │
+│  → 发给各端评审、收集反馈、修正规范               │
 └──────────────────┬──────────────────────────┘
                    ▼
 ┌─────────────────────────────────────────────┐
@@ -102,11 +115,13 @@ chmod +x install-harness.sh
 | 步骤 | 内容 | 说明 |
 |:-----|:-----|:-----|
 | 1 | 安装 OpenSpec CLI | `npm install -g @fission-ai/openspec@latest` |
-| 2 | 创建目录结构 | `~/.claude/skills/multi-review/references/` 等 |
-| 3 | 写入全局 CLAUDE.md | 三层协奏规则 + 工作流覆盖 + Skill 消歧 |
+| 2 | 创建目录结构 | `~/.claude/skills/`, `~/.claude/scripts/` 等 |
+| 3 | 写入全局 CLAUDE.md | 禁止规则 + 三层协奏 + 工作流覆盖 + Skill 消歧 |
 | 4 | 创建 multi-review skill | SKILL.md + 6 个 reviewer 参考文件 |
-| 5 | 创建 compound-knowledge skill | 知识沉淀 skill |
-| 6 | 初始化 OpenSpec 全局 skill | 4 个核心 workflow + 修补衔接指令 |
+| 5 | 创建 compound-knowledge skill | 按主题拆分 + index.md 索引机制 |
+| 6 | 创建 tech-proposal skill | 可选的跨团队技术方案生成 |
+| 7 | 创建 Stop Hook | workflow-reminder.sh + settings.json Hook 配置 |
+| 8 | 初始化 OpenSpec 全局 skill | 4 个核心 workflow + 修补衔接指令 |
 
 ### 手动完成：安装 Superpowers 插件
 
@@ -123,7 +138,8 @@ chmod +x install-harness.sh
 ```
 User skills:
   multi-review               ← 多维评审（脚本安装）
-  compound-knowledge         ← 知识沉淀（脚本安装）
+  compound-knowledge         ← 知识沉淀 + index 机制（脚本安装）
+  tech-proposal              ← 跨团队技术方案（脚本安装）
   openspec-propose           ← 规范提案（脚本安装）
   openspec-explore           ← 技术调研（脚本安装）
   openspec-apply-change
@@ -159,10 +175,13 @@ Do NOT downgrade to sonnet or haiku based on task complexity. Always use opus.
 
 ```
 ~/.claude/
-├── CLAUDE.md                                    ← 全局三层协奏规则
+├── CLAUDE.md                                    ← 禁止规则 + 三层协奏 + 工作流覆盖
+├── scripts/
+│   └── workflow-reminder.sh                     ← Stop Hook 工作流提醒脚本
+├── settings.json                                ← Hook 配置（Stop → workflow-reminder.sh）
 ├── skills/
 │   ├── multi-review/
-│   │   ├── SKILL.md                             ← 多维评审编排（6 阶段流水线）
+│   │   ├── SKILL.md                             ← 多维评审编排
 │   │   └── references/
 │   │       ├── correctness-reviewer.md          ← 逻辑/边界/竞态（始终参加）
 │   │       ├── testing-reviewer.md              ← 覆盖率/断言/脆弱测试（始终参加）
@@ -171,7 +190,9 @@ Do NOT downgrade to sonnet or haiku based on task complexity. Always use opus.
 │   │       ├── adversarial-reviewer.md          ← 混沌工程式攻击验证（条件触发）
 │   │       └── architecture-strategist.md       ← SOLID/耦合/分层（条件触发）
 │   ├── compound-knowledge/
-│   │   └── SKILL.md                             ← 知识沉淀（单 pass 提取+分类+写入）
+│   │   └── SKILL.md                             ← 知识沉淀（按主题拆分 + index.md 索引）
+│   ├── tech-proposal/
+│   │   └── SKILL.md                             ← 跨团队技术方案生成（可选）
 │   ├── openspec-propose/
 │   │   └── SKILL.md                             ← 衔接指令已修补（→ Superpowers）
 │   ├── openspec-explore/
@@ -180,6 +201,18 @@ Do NOT downgrade to sonnet or haiku based on task complexity. Always use opus.
 └── commands/
     └── opsx/                                    ← OpenSpec 斜杠命令
 ```
+
+**CLAUDE.md 中的 7 条绝对禁止规则：**
+
+1. 禁止 brainstorming 后直接跳到 writing-plans——必须先 openspec propose
+2. 禁止使用 /opsx:apply——必须通过 Superpowers SDD
+3. 禁止未经 writing-plans 细化就直接执行功能级任务
+4. 禁止功能完成后未运行 /multi-review 就声称开发完成
+5. 禁止重大功能结束后未提供 /compound-knowledge 就结束会话
+6. 禁止未读取 knowledge/index.md 就开始实现工作
+7. 禁止全量加载 knowledge/ 下所有文件——只读 index.md 按需加载
+
+**Stop Hook 行为：** Claude 每次停止时自动检查：是否有活跃的 OpenSpec 变更未归档、knowledge/ 是否缺少 index.md。仅输出提醒，不阻塞。
 
 6 个 reviewer 参考文件提取自 [compound-engineering-plugin](https://github.com/EveryInc/compound-engineering-plugin) 的 `plugins/compound-engineering/agents/review/`，每个是一个自包含的 reviewer 人格定义，包含：专注领域、信心度校准、不标记事项、JSON 输出格式。
 
@@ -196,9 +229,8 @@ cd ~/projects/your-project
 # 2. 初始化 OpenSpec
 openspec init --tools claude
 
-# 3. 创建知识目录
-mkdir -p knowledge/subsystem-specs
-touch knowledge/patterns.md knowledge/anti-patterns.md knowledge/decisions.md
+# 3. 创建知识目录（按主题拆分结构）
+mkdir -p knowledge/{patterns,anti-patterns,decisions,subsystem-specs}
 
 # 4. 创建项目级 CLAUDE.md
 cat > CLAUDE.md << 'EOF'
@@ -211,8 +243,8 @@ cat > CLAUDE.md << 'EOF'
 - (填写项目约定)
 
 ## Project Knowledge
-knowledge/ 目录包含本项目积累的模式、反模式、决策记录和子系统知识。
-开始工作前请先阅读相关知识文件。
+knowledge/index.md 包含本项目积累的模式、反模式、决策记录和子系统知识的轻量索引。
+开始工作前读取 index.md，根据任务相关性按需读取具体文件。
 EOF
 
 # 5. 提交
@@ -225,9 +257,10 @@ git add -A && git commit -m "chore: initialize project with OpenSpec and knowled
 your-project/
 ├── CLAUDE.md                  ← 项目级配置
 ├── knowledge/                 ← 知识积累（提交到 git，团队共享）
-│   ├── patterns.md
-│   ├── anti-patterns.md
-│   ├── decisions.md
+│   ├── index.md               ← 轻量索引（始终读取，< 500 tokens）
+│   ├── patterns/              ← 每个模式一个独立文件
+│   ├── anti-patterns/         ← 每个反模式一个独立文件
+│   ├── decisions/             ← 每个决策一个独立文件
 │   └── subsystem-specs/
 ├── openspec/                  ← 规范管理（提交到 git，团队共享）
 │   ├── changes/
@@ -271,6 +304,35 @@ Claude 运行 `openspec propose`，生成：
 - `design.md` — 技术设计（怎么做）
 - `specs/` — 行为规范（每个能力的需求 + 验收场景）
 - `tasks.md` — 功能级任务清单
+
+### Phase 2.5（可选）：生成技术方案供团队评审
+
+如果这个功能需要跨团队对齐（前端/后端/移动端/QA），对 Claude 说：
+
+```
+生成技术方案
+```
+
+Claude 触发 `/tech-proposal`，读取 OpenSpec 产物，生成 `tech-proposal.md`，包含：
+- 背景与目标、架构概览、核心功能设计
+- API 接口契约（完整 Request/Response/Example）
+- 数据库设计（字段/索引/约束）
+- 各端影响面分析、风险评估、待确认事项
+- 评审签名区
+
+拿着 `tech-proposal.md` 去评审（飞书/Confluence/拉会）。收到反馈后：
+
+```
+根据评审反馈，specs 中需要修改 XXX
+```
+
+Claude 更新 OpenSpec 产物。如需同步更新技术方案：
+
+```
+更新技术方案
+```
+
+> **什么时候跳过这一步？** 独立开发、不需要跨团队对齐的改动直接跳过，进入 Phase 3。
 
 ### Phase 3：审阅规范
 
@@ -346,9 +408,10 @@ Claude 执行：
 | 场景 | 怎么做 | 跳过什么 |
 |:-----|:-------|:---------|
 | **Bug 修复** (< 15 min) | 直接描述 bug，Claude 进入 systematic-debugging + TDD | 跳过 Layer 1，有经验就说"沉淀一下" |
-| **小功能** (< 1 小时) | `/opsx:propose 添加XX功能`，跳过 brainstorming | 跳过 brainstorming，正常走 Layer 2+3 |
-| **中等功能** (1-3 小时) | 简短 brainstorming 后走完整流程 | 可简化 brainstorming |
-| **大型重构** (> 4 小时) | **完整三层**，每个模块单独审查 | 不跳过任何步骤 |
+| **小功能** (< 1 小时) | `/opsx:propose 添加XX功能`，跳过 brainstorming | 跳过 brainstorming + tech-proposal |
+| **中等功能** (1-3 小时) | 简短 brainstorming 后走完整流程 | 可跳过 tech-proposal（独立开发时） |
+| **跨团队功能** (任意规模) | 完整流程 + `/tech-proposal` | 不跳过 tech-proposal |
+| **大型重构** (> 4 小时) | **完整三层** + tech-proposal，每个模块单独审查 | 不跳过任何步骤 |
 | **技术调研** | `/opsx:explore 分析XX方案的利弊` | 不产出正式规范 |
 | **跳过所有流程** | `直接修改XX文件，不走流程` | 全跳过，harness 是工具不是枷锁 |
 
@@ -386,6 +449,8 @@ Claude 执行：
 | 触发词 | 做什么 |
 |:-------|:-------|
 | `先 openspec propose` | brainstorming 后过渡到 OpenSpec |
+| `生成技术方案` / `tech-proposal` | （可选）生成面向团队评审的技术设计文档 |
+| `更新技术方案` | （可选）根据评审反馈增量更新 tech-proposal.md |
 | `规范审核通过，开始实现` | 触发 Superpowers Layer 2 执行流程 |
 | `做一次全面评审` / `multi-review` | 触发多维宏审查 |
 | `沉淀知识` / `compound` | 触发知识沉淀 |
@@ -430,7 +495,15 @@ reviewer 是根据 diff 内容动态选择的。如果你认为应该触发某�
 
 ### Q: `openspec update` 后 propose skill 的修改被覆盖了
 
-重新运行 `./install-harness.sh`，Step 6 会自动修补衔接指令。
+重新运行 `./install-harness.sh`，Step 8 会自动修补衔接指令。
+
+### Q: knowledge/ 文件太多会不会污染上下文？
+
+不会。knowledge 采用 index.md 按需加载机制——只有 index.md（< 500 tokens）始终加载，具体知识文件根据任务相关性按需读取。CLAUDE.md 的禁止规则明确禁止全量加载。
+
+### Q: Stop Hook 在不合适的时候触发了怎么办？
+
+Stop Hook 只输出文字提醒，不阻塞不强制。如果提醒不相关，Claude 会忽略它。如果觉得提醒太频繁，可以编辑 `~/.claude/settings.json` 删除 hooks 段落。
 
 ### Q: 团队怎么共享知识？
 
@@ -475,8 +548,8 @@ npm update -g @fission-ai/openspec
 - [ ] 确认已安装 Claude Code CLI、Node.js >= 18、Git
 - [ ] 运行 `chmod +x install-harness.sh && ./install-harness.sh`
 - [ ] 在 Claude Code 中运行 `/plugin install superpowers@claude-plugins-official`
-- [ ] 运行 `/skills` 验证（应看到 multi-review、compound-knowledge、openspec-* 和 superpowers:*）
+- [ ] 运行 `/skills` 验证（应看到 multi-review、compound-knowledge、tech-proposal、openspec-* 和 superpowers:*）
 - [ ] （可选）创建 `~/.claude/rules/model-selection.md` 强制 Opus
 - [ ] （可选）编辑 `~/.claude/CLAUDE.md` 删除 Language Rule（如不需要简体中文）
-- [ ] 在新项目中运行 `openspec init --tools claude` + 创建 `knowledge/` 目录
-- [ ] 试跑一次完整流程
+- [ ] 在新项目中运行 `openspec init --tools claude` + `mkdir -p knowledge/{patterns,anti-patterns,decisions,subsystem-specs}`
+- [ ] 试跑一次完整流程（Stop Hook 会在 Claude 停止时自动提醒未完成的工作流步骤）
